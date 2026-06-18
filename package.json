@@ -1,0 +1,15 @@
+{
+  "name": "route-scanner",
+  "version": "1.0.0",
+  "description": "Node.js 接口路由扫描工具 - 提取接口路径与请求方法",
+  "main": "src/index.js",
+  "bin": {
+    "route-scan": "src/cli.js"
+  },
+  "scripts": {
+    "scan": "node src/cli.js",
+    "scan:demo": "node src/cli.js ./demo"
+  },
+  "keywords": ["router", "scan", "express", "koa", "api"],
+  "license": "MIT"
+}
