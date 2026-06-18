@@ -1,4 +1,5 @@
 const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options', 'all'];
+const bodyParams = require('./body-params');
 
 function parse(content, filePath) {
   const routes = [];
@@ -6,9 +7,78 @@ function parse(content, filePath) {
 
   routes.push(...parseAppMethods(content, filePath));
   routes.push(...parseRouterMethods(content, filePath, routerPrefixes));
-  routes.push(...parseUseMiddleware(content, filePath, routerPrefixes));
+
+  for (const route of routes) {
+    route.bodyParams = extractBodyParamsForRoute(content, route);
+  }
 
   return routes;
+}
+
+function extractBodyParamsForRoute(content, route) {
+  if (!['post', 'put', 'patch'].includes(route.method)) {
+    return [];
+  }
+
+  const params = [];
+  const lineIndex = findRouteStart(content, route);
+  if (lineIndex < 0) return params;
+
+  const handlerBody = bodyParams.extractHandlerBody(content, lineIndex);
+  if (handlerBody) {
+    params.push(...bodyParams.parseReqBody(handlerBody));
+    params.push(...bodyParams.parseValidationMiddleware(handlerBody, content));
+  }
+
+  return mergeParams(params);
+}
+
+function findRouteStart(content, route) {
+  const patterns = [
+    new RegExp(
+      `\\b(?:app|router)\\s*\\.\\s*${route.method}\\s*\\(\\s*['"\`]${escapeRegExp(route.path)}['"\`]`,
+      'i'
+    ),
+    new RegExp(
+      `\\b(?:app|router)\\s*\\.\\s*${route.method}\\s*\\(\\s*['"\`]${escapeRegExp(stripPrefix(route.path))}['"\`]`,
+      'i'
+    )
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match) {
+      return match.index;
+    }
+  }
+  return -1;
+}
+
+function stripPrefix(path) {
+  const lastSlash = path.lastIndexOf('/');
+  if (lastSlash > 0) {
+    return path.slice(lastSlash) === '/' ? path : '/' + path.split('/').pop();
+  }
+  return path;
+}
+
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function mergeParams(params) {
+  const seen = new Map();
+  for (const p of params) {
+    if (seen.has(p.name)) {
+      const existing = seen.get(p.name);
+      if (existing.type === 'unknown' && p.type !== 'unknown') {
+        seen.set(p.name, p);
+      }
+    } else {
+      seen.set(p.name, p);
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function parseAppMethods(content, filePath) {
@@ -57,30 +127,6 @@ function parseRouterMethods(content, filePath, routerPrefixes) {
           file: filePath,
           line: getLineNumber(content, m.index)
         });
-      }
-    }
-  }
-
-  return routes;
-}
-
-function parseUseMiddleware(content, filePath, routerPrefixes) {
-  const routes = [];
-
-  const usePatterns = [
-    /\bapp\s*\.\s*use\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(\w+)/g,
-    /\brouter\s*\.\s*use\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*(\w+)/g
-  ];
-
-  for (const pattern of usePatterns) {
-    let match;
-    while ((match = pattern.exec(content)) !== null) {
-      const prefix = match[1];
-      const routerVar = match[2];
-      if (routerPrefixes[routerVar]) {
-        routerPrefixes[routerVar] = joinPath(prefix, routerPrefixes[routerVar]);
-      } else {
-        routerPrefixes[routerVar] = prefix;
       }
     }
   }

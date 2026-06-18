@@ -1,4 +1,5 @@
 const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options', 'all'];
+const bodyParams = require('./body-params');
 
 function parse(content, filePath) {
   const routes = [];
@@ -6,7 +7,77 @@ function parse(content, filePath) {
   routes.push(...parseKoaRouter(content, filePath));
   routes.push(...parseKoaRouterDecorator(content, filePath));
 
+  for (const route of routes) {
+    route.bodyParams = extractBodyParamsForRoute(content, route);
+  }
+
   return routes;
+}
+
+function extractBodyParamsForRoute(content, route) {
+  if (!['post', 'put', 'patch'].includes(route.method)) {
+    return [];
+  }
+
+  const params = [];
+  const lineIndex = findRouteStart(content, route);
+  if (lineIndex < 0) return params;
+
+  const handlerBody = bodyParams.extractHandlerBody(content, lineIndex);
+  if (handlerBody) {
+    params.push(...bodyParams.parseReqBody(handlerBody));
+    params.push(...bodyParams.parseValidationMiddleware(handlerBody, content));
+  }
+
+  return mergeParams(params);
+}
+
+function findRouteStart(content, route) {
+  const patterns = [
+    new RegExp(
+      `\\brouter\\s*\\.\\s*${route.method === 'delete' ? 'del' : route.method}\\s*\\(\\s*['"\`]${escapeRegExp(stripPrefix(route.path))}['"\`]`,
+      'i'
+    ),
+    new RegExp(
+      `@${route.method.charAt(0).toUpperCase() + route.method.slice(1)}\\s*\\(\\s*['"\`]${escapeRegExp(route.path)}['"\`]`,
+      'i'
+    ),
+    new RegExp(
+      `@${route.method.charAt(0).toUpperCase() + route.method.slice(1)}\\s*\\(`,
+      'i'
+    )
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match) {
+      return match.index;
+    }
+  }
+  return -1;
+}
+
+function stripPrefix(path) {
+  return path;
+}
+
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function mergeParams(params) {
+  const seen = new Map();
+  for (const p of params) {
+    if (seen.has(p.name)) {
+      const existing = seen.get(p.name);
+      if (existing.type === 'unknown' && p.type !== 'unknown') {
+        seen.set(p.name, p);
+      }
+    } else {
+      seen.set(p.name, p);
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function parseKoaRouter(content, filePath) {
@@ -40,7 +111,7 @@ function parseKoaRouter(content, filePath) {
 
     for (const method of HTTP_METHODS) {
       const methodPattern = new RegExp(
-        `\\b${routerVar}\\s*\\.\\s*${method}\\s*\\(\\s*['"\`]?([^'\`\\s,)]+)['"\`]?`,
+        `\\b${routerVar}\\s*\\.\\s*${method === 'delete' ? 'del' : method}\\s*\\(\\s*['"\`]?([^'\`\\s,)]+)['"\`]?`,
         'g'
       );
       let m;

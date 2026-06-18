@@ -1,24 +1,29 @@
 const Router = require('@koa/router');
 const router = new Router({ prefix: '/api/orders' });
 
-router.get('/', (ctx) => {
-  ctx.body = [{ id: 1, status: 'pending' }];
-});
-
-router.get('/:id', (ctx) => {
-  ctx.body = { id: ctx.params.id, status: 'pending' };
-});
+const orderCreateSchema = {
+  items: 'array',
+  totalPrice: 'number',
+  address: 'string',
+  phone: 'string',
+  remark: 'string'
+};
 
 router.post('/', (ctx) => {
-  ctx.body = { success: true, id: 2 };
+  const { items, totalPrice, address, phone, remark } = ctx.request.body;
+  ctx.body = { success: true, id: Date.now(), items, totalPrice, address, phone, remark };
 });
 
 router.put('/:id', (ctx) => {
-  ctx.body = { success: true };
+  const status = ctx.request.body.status;
+  const trackingNumber = ctx.request.body.trackingNumber;
+  ctx.body = { success: true, id: ctx.params.id, status, trackingNumber };
 });
 
-router.del('/:id', (ctx) => {
-  ctx.body = { success: true };
+router.patch('/:id/cancel', (ctx) => {
+  const reason = ctx.request.body.reason;
+  const cancelledBy = ctx.request.body.cancelledBy;
+  ctx.body = { success: true, id: ctx.params.id, reason, cancelledBy };
 });
 
 module.exports = router;
