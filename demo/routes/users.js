@@ -18,6 +18,7 @@ const userUpdateSchema = z.object({
   bio: z.string().optional()
 });
 
+// @deprecated - 请使用 POST /api/v2/users 接口
 router.post('/', (req, res) => {
   const { error } = userCreateSchema.validate(req.body);
   if (error) {
@@ -27,12 +28,17 @@ router.post('/', (req, res) => {
   res.json({ success: true, username, email, age });
 });
 
+/**
+ * 更新用户信息
+ * @beta 此接口正在开发中，可能会有变更
+ */
 router.put('/:id', (req, res) => {
   const data = userUpdateSchema.parse(req.body);
   const userId = req.params.id;
   res.json({ success: true, id: userId, ...data });
 });
 
+// 更新用户头像 - 上线中
 router.patch('/:id/avatar', (req, res) => {
   const avatarUrl = req.body.avatar;
   const description = req.body['description'];

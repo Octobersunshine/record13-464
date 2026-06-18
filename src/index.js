@@ -2,8 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const expressParser = require('./parsers/express');
 const koaParser = require('./parsers/koa');
+const statusParser = require('./parsers/status');
 
 const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options', 'all'];
+
+const STATUS_ICON = {
+  active: '●',
+  deprecated: '○',
+  development: '◐'
+};
 
 function findJsFiles(dir, files = []) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -49,12 +56,19 @@ function normalizeRoutes(routes) {
       seen.set(key, route);
     } else {
       const existing = seen.get(key);
-      if ((!existing.bodyParams || existing.bodyParams.length === 0) && route.bodyParams && route.bodyParams.length > 0) {
+      const needsUpdate =
+        ((!existing.bodyParams || existing.bodyParams.length === 0) && route.bodyParams && route.bodyParams.length > 0) ||
+        ((existing.status === 'active' || !existing.status) && route.status && route.status !== 'active');
+      if (needsUpdate) {
         seen.set(key, route);
       }
     }
   }
   return [...seen.values()].sort((a, b) => {
+    const statusOrder = { deprecated: 0, development: 1, active: 2 };
+    const sa = statusOrder[a.status] || 2;
+    const sb = statusOrder[b.status] || 2;
+    if (sa !== sb) return sa - sb;
     if (a.path !== b.path) return a.path.localeCompare(b.path);
     return a.method.localeCompare(b.method);
   });
@@ -73,12 +87,14 @@ function formatOutput(routes, format = 'table') {
 }
 
 function toTable(routes) {
+  const statusPad = 8;
   const methodPad = 8;
-  const pathPad = Math.max(40, ...routes.map(r => r.path.length));
+  const pathPad = Math.max(36, ...routes.map(r => r.path.length));
   const filePad = Math.max(20, ...routes.map(r => r.file.length));
   const paramsPad = 40;
 
   const header = [
+    pad('状态', statusPad),
     pad('方法', methodPad),
     pad('路径', pathPad),
     pad('文件', filePad),
@@ -86,6 +102,7 @@ function toTable(routes) {
   ].join(' | ');
 
   const separator = [
+    '-'.repeat(statusPad),
     '-'.repeat(methodPad),
     '-'.repeat(pathPad),
     '-'.repeat(filePad),
@@ -94,7 +111,10 @@ function toTable(routes) {
 
   const rows = routes.map(r => {
     const paramsStr = formatParamsInline(r.bodyParams);
+    const statusLabel = statusParser.getStatusLabel(r.status);
+    const statusIcon = STATUS_ICON[r.status] || STATUS_ICON.active;
     return [
+      pad(`${statusIcon}${statusLabel}`, statusPad),
       pad(r.method.toUpperCase(), methodPad),
       pad(r.path, pathPad),
       pad(r.file, filePad),
@@ -104,18 +124,25 @@ function toTable(routes) {
 
   const hasBodyParams = routes.some(r => r.bodyParams && r.bodyParams.length > 0);
   const detailLines = [];
+
+  const statusCounts = groupByStatus(routes);
+  const statusSummary = Object.entries(statusCounts)
+    .map(([s, list]) => `${STATUS_ICON[s]}${statusParser.getStatusLabel(s)}: ${list.length}`)
+    .join(', ');
+
   if (hasBodyParams) {
     detailLines.push('', '', '=== 详细入参结构 ===');
     for (const r of routes) {
       if (r.bodyParams && r.bodyParams.length > 0) {
         detailLines.push('');
-        detailLines.push(`${r.method.toUpperCase()} ${r.path} (${r.file})`);
+        const statusIcon = STATUS_ICON[r.status] || STATUS_ICON.active;
+        detailLines.push(`${statusIcon}${statusParser.getStatusLabel(r.status)}  ${r.method.toUpperCase()} ${r.path} (${r.file})`);
         detailLines.push(formatParamsDetail(r.bodyParams));
       }
     }
   }
 
-  const countLine = `\n共找到 ${routes.length} 个接口`;
+  const countLine = `\n共找到 ${routes.length} 个接口 (${statusSummary})`;
 
   return [header, separator, ...rows, countLine, ...detailLines].join('\n');
 }
@@ -140,26 +167,48 @@ function formatParamsDetail(params) {
 }
 
 function toMarkdown(routes) {
+  const statusCounts = groupByStatus(routes);
+  const statusSummary = Object.entries(statusCounts)
+    .map(([s, list]) => `**${statusParser.getStatusLabel(s)}**: ${list.length}`)
+    .join(' · ');
+
   const lines = [
     '# 接口路由汇总',
     '',
-    `共扫描到 **${routes.length}** 个接口`,
+    `共扫描到 **${routes.length}** 个接口 (${statusSummary})`,
     '',
-    '| 方法 | 路径 | 文件 | 入参 |',
-    '| --- | --- | --- | --- |'
+    '| 状态 | 方法 | 路径 | 文件 | 入参 |',
+    '| --- | --- | --- | --- | --- |'
   ];
 
   for (const r of routes) {
     const paramsStr = formatParamsMarkdown(r.bodyParams);
-    lines.push(`| ${r.method.toUpperCase()} | ${r.path} | ${r.file} | ${paramsStr} |`);
+    const statusLabel = statusParser.getStatusLabel(r.status);
+    const statusBadge = getStatusBadge(r.status);
+    lines.push(`| ${statusBadge} ${statusLabel} | ${r.method.toUpperCase()} | ${r.path} | ${r.file} | ${paramsStr} |`);
+  }
+
+  const groupedByStatus = groupByStatus(routes);
+  lines.push('', '## 按状态分组', '');
+  for (const [status, list] of Object.entries(groupedByStatus)) {
+    const badge = getStatusBadge(status);
+    lines.push(`### ${badge} ${statusParser.getStatusLabel(status)} (${list.length} 个)`, '');
+    for (const r of list) {
+      const paramsStr = r.bodyParams && r.bodyParams.length > 0
+        ? ` (${r.bodyParams.length} 个参数)`
+        : '';
+      lines.push(`- ${r.method.toUpperCase()} \`${r.path}\` - ${r.file}${paramsStr}`);
+    }
+    lines.push('');
   }
 
   const routesWithParams = routes.filter(r => r.bodyParams && r.bodyParams.length > 0);
   if (routesWithParams.length > 0) {
-    lines.push('', '## 接口入参详情', '');
+    lines.push('## 接口入参详情', '');
     for (const r of routesWithParams) {
-      lines.push(`### ${r.method.toUpperCase()} ${r.path}`, '');
-      lines.push(`> 文件: ${r.file}`, '');
+      const badge = getStatusBadge(r.status);
+      lines.push(`### ${badge} ${r.method.toUpperCase()} ${r.path}`, '');
+      lines.push(`> 文件: ${r.file} · 状态: ${statusParser.getStatusLabel(r.status)}`, '');
       lines.push('| 参数名 | 类型 | 必填 | 来源 |');
       lines.push('| --- | --- | --- | --- |');
       for (const p of r.bodyParams) {
@@ -177,12 +226,22 @@ function toMarkdown(routes) {
       const paramsStr = r.bodyParams && r.bodyParams.length > 0
         ? ` (${r.bodyParams.length} 个参数)`
         : '';
-      lines.push(`- \`${r.path}\` - ${r.file}${paramsStr}`);
+      const badge = getStatusBadge(r.status);
+      lines.push(`- ${badge} \`${r.path}\` - ${r.file}${paramsStr}`);
     }
     lines.push('');
   }
 
   return lines.join('\n');
+}
+
+function getStatusBadge(status) {
+  const badges = {
+    active: '🟢',
+    deprecated: '🔴',
+    development: '🟡'
+  };
+  return badges[status] || '⚪';
 }
 
 function formatParamsMarkdown(params) {
@@ -198,6 +257,16 @@ function groupByMethod(routes) {
   for (const r of routes) {
     if (!groups[r.method]) groups[r.method] = [];
     groups[r.method].push(r);
+  }
+  return groups;
+}
+
+function groupByStatus(routes) {
+  const groups = {};
+  for (const r of routes) {
+    const s = r.status || 'active';
+    if (!groups[s]) groups[s] = [];
+    groups[s].push(r);
   }
   return groups;
 }

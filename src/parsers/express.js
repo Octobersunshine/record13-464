@@ -1,5 +1,6 @@
 const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options', 'all'];
 const bodyParams = require('./body-params');
+const statusParser = require('./status');
 
 function parse(content, filePath) {
   const routes = [];
@@ -10,9 +11,16 @@ function parse(content, filePath) {
 
   for (const route of routes) {
     route.bodyParams = extractBodyParamsForRoute(content, route);
+    route.status = extractStatusForRoute(content, route);
   }
 
   return routes;
+}
+
+function extractStatusForRoute(content, route) {
+  const lineIndex = findRouteStart(content, route);
+  if (lineIndex < 0) return statusParser.STATUS.ACTIVE;
+  return statusParser.detectStatus(content, lineIndex);
 }
 
 function extractBodyParamsForRoute(content, route) {

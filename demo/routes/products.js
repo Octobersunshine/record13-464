@@ -20,6 +20,7 @@ const productUpdateSchema = Joi.object({
   tags: Joi.array()
 });
 
+// 创建商品 - 生产环境
 router.post('/', (req, res) => {
   const { error, value } = productCreateSchema.validate(req.body);
   if (error) {
@@ -28,6 +29,7 @@ router.post('/', (req, res) => {
   res.json({ success: true, id: Date.now(), ...value });
 });
 
+// 废弃 - 请使用 PATCH /:id 接口
 router.put('/:id', (req, res) => {
   const { error, value } = productUpdateSchema.validate(req.body);
   if (error) {
@@ -36,6 +38,7 @@ router.put('/:id', (req, res) => {
   res.json({ success: true, id: req.params.id, ...value });
 });
 
+// TODO: 开发中 - 商品评论接口
 router.post('/:id/reviews', (req, res) => {
   const rating = req.body.rating;
   const comment = req.body.comment;
